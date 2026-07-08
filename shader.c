@@ -30,8 +30,8 @@ const char *WORLD_FS =
 "  return mix(mix(a,b,f.x),mix(c,d,f.x),f.y);}\n"
 "float fbm(vec2 p){ float s=0.0,a=0.5; for(int i=0;i<4;i++){ s+=a*vnoise(p); p*=2.0; a*=0.5;} return s;}\n"
 /* per-material height fields (for bump mapping) */
-"float hWall(vec2 uv){ float row=floor(uv.y*3.0); float off=mod(row,2.0)*0.5;\n"
-"  vec2 b=vec2(uv.x*2.0+off,uv.y*3.0); vec2 f=fract(b);\n"
+"float hWall(vec2 uv){ float row=floor(uv.y*4.0); float off=mod(row,2.0)*0.5;\n"
+"  vec2 b=vec2(uv.x*2.0+off,uv.y*4.0); vec2 f=fract(b);\n"
 "  float edge=min(min(f.x,1.0-f.x),min(f.y,1.0-f.y));\n"
 "  float m=smoothstep(0.05,0.11,edge);\n"
 "  return mix(0.0,0.8+fbm(b*4.0)*0.2,m);}\n"
@@ -50,8 +50,8 @@ const char *WORLD_FS =
 "    shininess=48.0; sstr=0.55*m; return mix(vec3(0.03,0.03,0.04),stone,m);}\n"
 "  if(t==1){ float n=fbm(uv*2.0); vec3 c=mix(vec3(0.06,0.06,0.08),vec3(0.15,0.14,0.17),n);\n"
 "    c*=0.7+0.4*fbm(uv*6.0); shininess=8.0; sstr=0.04; return c;}\n"
-"  float row=floor(uv.y*3.0); float off=mod(row,2.0)*0.5;\n"
-"  vec2 b=vec2(uv.x*2.0+off,uv.y*3.0); vec2 f=fract(b);\n"
+"  float row=floor(uv.y*4.0); float off=mod(row,2.0)*0.5;\n"
+"  vec2 b=vec2(uv.x*2.0+off,uv.y*4.0); vec2 f=fract(b);\n"
 "  float edge=min(min(f.x,1.0-f.x),min(f.y,1.0-f.y)); float m=smoothstep(0.05,0.11,edge);\n"
 "  float bn=hash(floor(b)); vec3 brick=mix(vec3(0.27,0.14,0.10),vec3(0.53,0.33,0.25),bn);\n"
 "  brick*=0.75+0.5*fbm(b*6.0);\n"
@@ -83,13 +83,14 @@ const char *LIT_VS =
 "#version 330 core\n"
 "layout(location=0) in vec3 aPos;\n"
 "uniform mat4 uMVP; uniform mat4 uModel; uniform mat3 uNormalMat;\n"
-"out vec3 vPos; out vec3 vN;\n"
-"void main(){ vec4 w=uModel*vec4(aPos,1.0); vPos=w.xyz; vN=uNormalMat*aPos; gl_Position=uMVP*vec4(aPos,1.0);}\n";
+"out vec3 vPos; out vec3 vN; out float vLy;\n"
+"void main(){ vec4 w=uModel*vec4(aPos,1.0); vPos=w.xyz; vN=uNormalMat*aPos; vLy=aPos.y;\n"
+"  gl_Position=uMVP*vec4(aPos,1.0);}\n";
 const char *LIT_FS =
 "#version 330 core\n"
-"in vec3 vPos; in vec3 vN; out vec4 frag;\n"
+"in vec3 vPos; in vec3 vN; in float vLy; out vec4 frag;\n"
 "uniform int uNumLights; uniform vec3 uLightPos[24]; uniform vec3 uLightColor[24]; uniform float uLightRange[24];\n"
-"uniform vec3 uViewPos; uniform vec3 uBase; uniform vec3 uEmissive;\n"
+"uniform vec3 uViewPos; uniform vec3 uBase; uniform vec3 uEmissive; uniform float uFade;\n"
 "void main(){ vec3 N=normalize(vN); vec3 V=normalize(uViewPos-vPos);\n"
 "  vec3 col=uBase*0.06 + uEmissive;\n"
 "  for(int i=0;i<uNumLights;i++){ vec3 L=uLightPos[i]-vPos; float d=length(L); L/=max(d,0.001);\n"
@@ -97,23 +98,30 @@ const char *LIT_FS =
 "    vec3 H=normalize(L+V); float spec=pow(max(dot(N,H),0.0),16.0)*0.4;\n"
 "    col+=(uBase*diff+spec)*uLightColor[i]*att; }\n"
 "  float fog=exp(-length(uViewPos-vPos)*0.05); col=mix(vec3(0.01,0.01,0.02),col,clamp(fog,0.0,1.0));\n"
-"  col=col/(col+vec3(1.0)); col=pow(col,vec3(1.0/2.2)); frag=vec4(col,1.0);}\n";
+"  col=col/(col+vec3(1.0)); col=pow(col,vec3(1.0/2.2));\n"
+/* wraith bottom-fade: local y is -0.5 (feet) .. +0.5 (head); dissolve the base */
+"  float a=1.0; if(uFade>0.5){ a=smoothstep(-0.5,-0.05,vLy)*0.85; if(a<0.03) discard; }\n"
+"  frag=vec4(col,a);}\n";
 
 /* ---- emissive props: relics, bolts, exit, staff tip. Fake-shaded so
         spheres read as glowing 3D orbs. ---- */
 const char *EMIT_VS =
 "#version 330 core\n"
 "layout(location=0) in vec3 aPos;\n"
-"uniform mat4 uMVP;\n"
-"out vec3 vLocal;\n"
-"void main(){ vLocal=aPos; gl_Position=uMVP*vec4(aPos,1.0);}\n";
+"uniform mat4 uMVP; uniform mat4 uModel;\n"
+"out vec3 vLocal; out vec3 vWorld;\n"
+"void main(){ vLocal=aPos; vWorld=(uModel*vec4(aPos,1.0)).xyz; gl_Position=uMVP*vec4(aPos,1.0);}\n";
 const char *EMIT_FS =
 "#version 330 core\n"
-"in vec3 vLocal; out vec4 frag; uniform vec3 uColor; uniform float uPulse;\n"
-"void main(){ vec3 n=normalize(vLocal); vec3 L=normalize(vec3(0.4,0.7,0.55));\n"
-"  float diff=0.4+0.6*max(dot(n,L),0.0);\n"
-"  vec3 c=uColor*(0.7+0.6*uPulse)*diff + uColor*0.2;\n"
-"  c=c/(c+vec3(1.0)); c=pow(c,vec3(1.0/2.2)); frag=vec4(c,1.0);}\n";
+"in vec3 vLocal; in vec3 vWorld; out vec4 frag;\n"
+"uniform vec3 uColor; uniform float uPulse; uniform float uAlpha; uniform vec3 uViewPos;\n"
+"void main(){ vec3 n=normalize(vLocal); vec3 V=normalize(uViewPos-vWorld);\n"
+"  float fres=pow(1.0-max(dot(n,V),0.0),2.5);\n"        /* glassy edge glow */
+"  vec3 L=normalize(vec3(0.4,0.7,0.55)); float diff=0.4+0.6*max(dot(n,L),0.0);\n"
+"  vec3 c=uColor*(0.7+0.6*uPulse)*diff + uColor*fres*1.3 + uColor*0.12;\n"
+"  c=c/(c+vec3(1.0)); c=pow(c,vec3(1.0/2.2));\n"
+"  float a=mix(uAlpha,1.0,fres);\n"                     /* transparent core, solid rim */
+"  frag=vec4(c,a);}\n";
 
 /* ---- particles: additive round point sprites ---- */
 const char *POINT_VS =
@@ -134,8 +142,10 @@ const char *POINT_FS =
 const char *HUD_VS =
 "#version 330 core\n"
 "layout(location=0) in vec2 aPos;\n"
-"uniform vec2 uOffset; uniform vec2 uScale;\n"
-"void main(){ gl_Position=vec4(aPos*uScale+uOffset,0.0,1.0);}\n";
+"uniform vec2 uOffset; uniform vec2 uScale; uniform float uRot;\n"
+"void main(){ vec2 c=aPos-0.5; float s=sin(uRot),co=cos(uRot);\n"
+"  vec2 r=vec2(c.x*co-c.y*s, c.x*s+c.y*co)+0.5;\n"
+"  gl_Position=vec4(r*uScale+uOffset,0.0,1.0);}\n";
 const char *HUD_FS =
 "#version 330 core\n"
 "out vec4 frag; uniform vec3 uColor; uniform float uAlpha;\n"

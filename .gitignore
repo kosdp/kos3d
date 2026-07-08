@@ -1,3 +1,4 @@
 # build artifacts
 *.o
 /kos3d
+/kos3d-static

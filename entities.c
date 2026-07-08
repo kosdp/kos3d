@@ -25,10 +25,27 @@ void place_props(void){
     g_num_relics=0; g_collected=0; g_num_torches=0; g_num_mon=0; g_kills=0; g_num_shrines=0;
     for(int i=0;i<MAX_BOLTS;i++) g_bolt[i].alive=0;
 
-    /* a relic in every room except the spawn room (index 0) */
+    /* exit portal: the room farthest from spawn (decided first so relic/shrine
+       placement can avoid it) */
+    v3 spawn=room_center_world(g_rooms[0]); float best=-1; g_exit_room=0;
     for(int i=1;i<g_num_rooms;i++){
-        v3 c=room_center_world(g_rooms[i]); c.y=0.9f;
-        g_relics[g_num_relics].pos=c; g_relics[g_num_relics].taken=0; g_num_relics++;
+        float d=v3len(v3sub(room_center_world(g_rooms[i]),spawn));
+        if(d>best){ best=d; g_exit_room=i; }
+    }
+    g_exit_pos=room_center_world(g_rooms[g_exit_room]); g_exit_pos.y=WALL_H*0.5f;
+
+    /* every non-spawn room holds EITHER a relic or a healing shrine (both at the
+       room centre), never both. Roughly every third room is a shrine. */
+    for(int i=1;i<g_num_rooms;i++){
+        v3 c=room_center_world(g_rooms[i]);
+        if(i!=g_exit_room && (i%3)==0 && g_num_shrines<MAX_SHRINES){
+            c.y=WALL_H*0.5f;
+            g_shrines[g_num_shrines].pos=c; g_shrines[g_num_shrines].cd=0.0f;
+            g_num_shrines++;
+        }else{
+            c.y=0.9f;
+            g_relics[g_num_relics].pos=c; g_relics[g_num_relics].taken=0; g_num_relics++;
+        }
     }
     /* warm torch lights near ceilings, index 0 reserved for the player torch */
     for(int i=0;i<g_num_rooms && g_num_torches<MAX_LIGHTS-1;i++){
@@ -49,24 +66,9 @@ void place_props(void){
             else if(roll<88){ m.tier=1; m.hp=45.0f; m.scale=1.4f; }  /* 3 hits */
             else { m.tier=2; m.hp=60.0f; m.scale=1.8f; }             /* 4 hits */
             m.pos.y=0.75f+0.25f*m.scale; /* keep the base near the floor */
-            m.maxhp=m.hp; m.alive=1; m.anim=frand()*6.28f; m.hurt=0; m.atk_cd=0;
+            m.maxhp=m.hp; m.alive=1; m.anim=frand()*6.28f; m.hurt=0; m.atk_cd=0; m.aggro=0;
             g_mon[g_num_mon++]=m;
         }
-    }
-    /* exit portal: the room farthest from spawn */
-    v3 spawn=room_center_world(g_rooms[0]); float best=-1; g_exit_room=0;
-    for(int i=1;i<g_num_rooms;i++){
-        float d=v3len(v3sub(room_center_world(g_rooms[i]),spawn));
-        if(d>best){ best=d; g_exit_room=i; }
-    }
-    g_exit_pos=room_center_world(g_rooms[g_exit_room]); g_exit_pos.y=WALL_H*0.5f;
-
-    /* healing shrines in a subset of rooms (not spawn, not exit) */
-    for(int i=1;i<g_num_rooms && g_num_shrines<MAX_SHRINES;i++){
-        if(i==g_exit_room || (i%2)!=0) continue; /* roughly every other room */
-        g_shrines[g_num_shrines].pos=room_center_world(g_rooms[i]);
-        g_shrines[g_num_shrines].cd=0.0f;        /* starts active */
-        g_num_shrines++;
     }
 }
 

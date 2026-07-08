@@ -8,7 +8,7 @@
 #define MAP_H       48
 #define MAX_ROOMS   16
 #define CELL        2.6f   /* world size of one grid cell   */
-#define WALL_H      3.2f   /* wall / ceiling height         */
+#define WALL_H      4.3f   /* wall / ceiling height (~4 brick rows) */
 #define CORRIDOR_W  2      /* corridor width in cells       */
 
 typedef struct { int x, y, w, h; } Room;

@@ -15,4 +15,8 @@ int build_world_geometry(float **out);
  * For a sphere centered at the origin the position doubles as the normal. */
 int make_sphere(float **out);
 
+/* Unit cylinder along Y (radius 0.5, height 1, centered), positions only.
+ * Caller owns *out and must free() it. Returns the vertex count. */
+int make_cylinder(float **out);
+
 #endif /* MESH_H */

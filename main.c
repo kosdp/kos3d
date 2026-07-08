@@ -20,6 +20,7 @@
 #include <stdio.h>
 #include <math.h>
 #include <stdlib.h>
+#include <string.h>
 #include <time.h>
 
 #include "math3d.h"
@@ -33,16 +34,26 @@
 static double g_last_mx, g_last_my;
 static int    g_first_mouse=1;
 static int    g_want_regen=0;
+static int    g_paused=1;                 /* start in the menu, paused */
+static double g_cursor_x, g_cursor_y;     /* raw cursor position (menu) */
+
+/* pause/resume: swap cursor mode and avoid a look-jump on resume */
+static void set_paused(GLFWwindow *w, int p){
+    g_paused=p;
+    glfwSetInputMode(w,GLFW_CURSOR, p?GLFW_CURSOR_NORMAL:GLFW_CURSOR_DISABLED);
+    if(!p) g_first_mouse=1;
+}
 
 static void key_cb(GLFWwindow *w, int key, int sc, int action, int mods){
     (void)sc;(void)mods;
     if(action==GLFW_PRESS){
-        if(key==GLFW_KEY_ESCAPE) glfwSetWindowShouldClose(w,1);
-        if(key==GLFW_KEY_R)      g_want_regen=1;
+        if(key==GLFW_KEY_ESCAPE) set_paused(w, !g_paused); /* toggle menu */
     }
 }
 static void mouse_cb(GLFWwindow *w, double mx, double my){
     (void)w;
+    g_cursor_x=mx; g_cursor_y=my;
+    if(g_paused) return;                    /* no camera look while in the menu */
     if(g_first_mouse){ g_last_mx=mx; g_last_my=my; g_first_mouse=0; }
     float dx=(float)(mx-g_last_mx), dy=(float)(my-g_last_my);
     g_last_mx=mx; g_last_my=my;
@@ -53,6 +64,85 @@ static void mouse_cb(GLFWwindow *w, double mx, double my){
     if(g_pitch<-lim) g_pitch=-lim;
 }
 
+/* ---- minimal icon + pixel-digit HUD helpers (no fonts / no text labels) ---- */
+static GLint H_off, H_scl, H_rot, H_col, H_alp; /* HUD uniform locations */
+static float H_asp = 1.0f;                        /* WH/WW, refreshed per frame */
+
+/* 3x5 pixel font, digits 0-9. Each byte is one row, bit2=left .. bit0=right. */
+static const unsigned char DIGIT[10][5] = {
+    {7,5,5,5,7}, {2,6,2,2,7}, {7,1,7,4,7}, {7,1,7,1,7}, {5,5,7,1,1},
+    {7,4,7,1,7}, {7,4,7,5,7}, {7,1,1,2,2}, {7,5,7,5,7}, {7,5,7,1,7},
+};
+
+/* solid axis-aligned rect; expects prog_hud active and the unit-quad VAO bound */
+static void hud_rect(float x,float y,float w,float h,float r,float g,float b,float a){
+    glUniform1f(H_rot,0.0f);
+    glUniform2f(H_off,x,y); glUniform2f(H_scl,w,h);
+    glUniform3f(H_col,r,g,b); glUniform1f(H_alp,a);
+    glDrawArrays(GL_TRIANGLES,0,6);
+}
+/* gem/diamond centered at (cx,cy), half-height hh (aspect-corrected to a square) */
+static void hud_diamond(float cx,float cy,float hh,float r,float g,float b,float a){
+    float hw=hh*H_asp;
+    glUniform1f(H_rot,0.78539816f);   /* 45 degrees */
+    glUniform2f(H_off,cx-hw,cy-hh); glUniform2f(H_scl,2.0f*hw,2.0f*hh);
+    glUniform3f(H_col,r,g,b); glUniform1f(H_alp,a);
+    glDrawArrays(GL_TRIANGLES,0,6);
+}
+/* one digit with its top-left at (x,y); pixel cell is pw x ph */
+static void hud_digit(int d,float x,float y,float pw,float ph,float r,float g,float b,float a){
+    if(d<0||d>9) return;
+    for(int row=0;row<5;row++)
+        for(int col=0;col<3;col++)
+            if(DIGIT[d][row] & (4>>col))
+                hud_rect(x+col*pw, y-(row+1)*ph, pw*0.82f, ph*0.82f, r,g,b,a);
+}
+/* left-aligned non-negative integer starting at top-left (x,y) */
+static void hud_number(int val,float x,float y,float pw,float ph,float r,float g,float b,float a){
+    char buf[16]; int n=snprintf(buf,sizeof buf,"%d",val<0?0:val);
+    float dx=x;
+    for(int i=0;i<n;i++){ hud_digit(buf[i]-'0',dx,y,pw,ph,r,g,b,a); dx+=pw*3.6f; }
+}
+
+/* 3x5 glyph for the few uppercase letters the menu needs (else blank) */
+static void glyph5(char c, unsigned char g[5]){
+    if(c>='0'&&c<='9'){ for(int i=0;i<5;i++) g[i]=DIGIT[c-'0'][i]; return; }
+    const unsigned char *p=0;
+    switch(c){
+        case 'A':{static const unsigned char t[5]={2,5,7,5,5}; p=t;} break;
+        case 'D':{static const unsigned char t[5]={6,5,5,5,6}; p=t;} break;
+        case 'E':{static const unsigned char t[5]={7,4,6,4,7}; p=t;} break;
+        case 'I':{static const unsigned char t[5]={7,2,2,2,7}; p=t;} break;
+        case 'K':{static const unsigned char t[5]={5,6,4,6,5}; p=t;} break;
+        case 'O':{static const unsigned char t[5]={7,5,5,5,7}; p=t;} break;
+        case 'R':{static const unsigned char t[5]={6,5,6,5,5}; p=t;} break;
+        case 'S':{static const unsigned char t[5]={7,4,7,1,7}; p=t;} break;
+        case 'T':{static const unsigned char t[5]={7,2,2,2,2}; p=t;} break;
+        case 'X':{static const unsigned char t[5]={5,5,2,5,5}; p=t;} break;
+        case '/':{static const unsigned char t[5]={1,1,2,4,4}; p=t;} break;
+        default: for(int i=0;i<5;i++) g[i]=0; return;
+    }
+    for(int i=0;i<5;i++) g[i]=p[i];
+}
+/* left-aligned text; pw/ph are the pixel-cell size in NDC */
+static void hud_text(const char *s,float x,float y,float pw,float ph,float r,float g,float b,float a){
+    float dx=x;
+    for(const char *c=s;*c;c++){
+        unsigned char gl[5]; glyph5(*c,gl);
+        for(int row=0;row<5;row++)
+            for(int col=0;col<3;col++)
+                if(gl[row] & (4>>col))
+                    hud_rect(dx+col*pw, y-(row+1)*ph, pw*0.82f, ph*0.82f, r,g,b,a);
+        dx+=pw*3.6f;
+    }
+}
+/* text centered horizontally on cx, vertically on cy */
+static void hud_text_centered(const char *s,float cx,float cy,float ph,float r,float g,float b,float a){
+    float pw=ph*H_asp;
+    float w=(float)strlen(s)*pw*3.6f - pw*0.6f;
+    hud_text(s, cx-w*0.5f, cy+2.5f*ph, pw, ph, r,g,b,a);
+}
+
 int main(void){
     srand((unsigned)time(NULL));
     if(!glfwInit()){ fprintf(stderr,"glfwInit failed\n"); return 1; }
@@ -61,12 +151,19 @@ int main(void){
     glfwWindowHint(GLFW_OPENGL_PROFILE,GLFW_OPENGL_CORE_PROFILE);
     glfwWindowHint(GLFW_SAMPLES,4);
 
-    int WW=1280, WH=720;
-    GLFWwindow *win=glfwCreateWindow(WW,WH,"kos3d — dungeon crawler",NULL,NULL);
+    /* fullscreen on the primary monitor at its current (native) resolution */
+    GLFWmonitor *mon=glfwGetPrimaryMonitor();
+    const GLFWvidmode *mode=glfwGetVideoMode(mon);
+    glfwWindowHint(GLFW_RED_BITS,   mode->redBits);
+    glfwWindowHint(GLFW_GREEN_BITS, mode->greenBits);
+    glfwWindowHint(GLFW_BLUE_BITS,  mode->blueBits);
+    glfwWindowHint(GLFW_REFRESH_RATE, mode->refreshRate);
+    int WW=mode->width, WH=mode->height;
+    GLFWwindow *win=glfwCreateWindow(WW,WH,"kos3d — dungeon crawler",mon,NULL);
     if(!win){ fprintf(stderr,"window failed\n"); glfwTerminate(); return 1; }
     glfwMakeContextCurrent(win);
     glfwSwapInterval(1);
-    glfwSetInputMode(win,GLFW_CURSOR,GLFW_CURSOR_DISABLED);
+    glfwSetInputMode(win,GLFW_CURSOR,GLFW_CURSOR_NORMAL); /* start in the menu */
     if(glfwRawMouseMotionSupported()) glfwSetInputMode(win,GLFW_RAW_MOUSE_MOTION,GLFW_TRUE);
     glfwSetKeyCallback(win,key_cb);
     glfwSetCursorPosCallback(win,mouse_cb);
@@ -119,6 +216,16 @@ int main(void){
     glEnableVertexAttribArray(0);
     free(sph);
 
+    /* cylinder VAO/VBO (round pillars: shrines) */
+    float *cyl=NULL; int cycount=make_cylinder(&cyl);
+    GLuint cyvao,cyvbo;
+    glGenVertexArrays(1,&cyvao); glGenBuffers(1,&cyvbo);
+    glBindVertexArray(cyvao); glBindBuffer(GL_ARRAY_BUFFER,cyvbo);
+    glBufferData(GL_ARRAY_BUFFER,cycount*3*sizeof(float),cyl,GL_STATIC_DRAW);
+    glVertexAttribPointer(0,3,GL_FLOAT,GL_FALSE,3*sizeof(float),(void*)0);
+    glEnableVertexAttribArray(0);
+    free(cyl);
+
     /* crosshair lines */
     float ch[]={ -0.02f,0, 0.02f,0,  0,-0.035f, 0,0.035f };
     GLuint hvao,hvbo;
@@ -146,19 +253,25 @@ int main(void){
     GLint ul_nrm  =glGetUniformLocation(prog_lit,"uNormalMat");
     GLint ul_base =glGetUniformLocation(prog_lit,"uBase");
     GLint ul_emis =glGetUniformLocation(prog_lit,"uEmissive");
+    GLint ul_fade =glGetUniformLocation(prog_lit,"uFade");
     LightU ll=light_locs(prog_lit);
 
     GLint ue_mvp=glGetUniformLocation(prog_emit,"uMVP");
+    GLint ue_model=glGetUniformLocation(prog_emit,"uModel");
     GLint ue_col=glGetUniformLocation(prog_emit,"uColor");
     GLint ue_pul=glGetUniformLocation(prog_emit,"uPulse");
+    GLint ue_alp=glGetUniformLocation(prog_emit,"uAlpha");
+    GLint ue_view=glGetUniformLocation(prog_emit,"uViewPos");
 
     GLint uh_off=glGetUniformLocation(prog_hud,"uOffset");
     GLint uh_scl=glGetUniformLocation(prog_hud,"uScale");
+    GLint uh_rot=glGetUniformLocation(prog_hud,"uRot");
     GLint uh_col=glGetUniformLocation(prog_hud,"uColor");
     GLint uh_alp=glGetUniformLocation(prog_hud,"uAlpha");
+    H_off=uh_off; H_scl=uh_scl; H_rot=uh_rot; H_col=uh_col; H_alp=uh_alp;
 
     int prev_mouse_down=0;
-    double prev=glfwGetTime(), fps_t=prev; int fps_n=0; char title[200];
+    double prev=glfwGetTime();
 
     while(!glfwWindowShouldClose(win)){
         double now=glfwGetTime();
@@ -182,34 +295,40 @@ int main(void){
         /* movement */
         float fwd_x=cosf(g_yaw), fwd_z=sinf(g_yaw);
         float rgt_x=cosf(g_yaw+PI*0.5f), rgt_z=sinf(g_yaw+PI*0.5f);
-        float speed=(glfwGetKey(win,GLFW_KEY_LEFT_SHIFT)==GLFW_PRESS?7.5f:4.2f);
         float mx=0,mz=0;
         if(glfwGetKey(win,GLFW_KEY_W)==GLFW_PRESS||glfwGetKey(win,GLFW_KEY_UP)==GLFW_PRESS){    mx+=fwd_x; mz+=fwd_z; }
         if(glfwGetKey(win,GLFW_KEY_S)==GLFW_PRESS||glfwGetKey(win,GLFW_KEY_DOWN)==GLFW_PRESS){  mx-=fwd_x; mz-=fwd_z; }
         if(glfwGetKey(win,GLFW_KEY_D)==GLFW_PRESS||glfwGetKey(win,GLFW_KEY_RIGHT)==GLFW_PRESS){ mx+=rgt_x; mz+=rgt_z; }
         if(glfwGetKey(win,GLFW_KEY_A)==GLFW_PRESS||glfwGetKey(win,GLFW_KEY_LEFT)==GLFW_PRESS){  mx-=rgt_x; mz-=rgt_z; }
         float ml=sqrtf(mx*mx+mz*mz);
-        if(ml>1e-4f && !g_won){
+        /* sprint only while there is energy, and it drains the same blue bar as
+           shooting so you can't run forever */
+        int sprint = glfwGetKey(win,GLFW_KEY_LEFT_SHIFT)==GLFW_PRESS && ml>1e-4f && g_energy>0.0f && !g_won && !g_paused;
+        float speed = sprint?7.5f:4.2f;
+        if(ml>1e-4f && !g_won && !g_paused){
             mx/=ml; mz/=ml;
             float pr=PLAYER_R*CELL;
             float nx=g_px+mx*speed*dt, nz=g_pz+mz*speed*dt;
             if(!blocked_r(nx,g_pz,pr)) g_px=nx;
             if(!blocked_r(g_px,nz,pr)) g_pz=nz;
             g_bob += speed*dt*1.6f;
+            if(sprint){ g_energy -= dt*SPRINT_DRAIN; if(g_energy<0) g_energy=0; }
         }
 
         float eye_y=g_eye_y + sinf(g_bob)*0.06f;
         v3 eye=v3v(g_px,eye_y,g_pz);
         v3 dir=v3v(cosf(g_pitch)*cosf(g_yaw), sinf(g_pitch), cosf(g_pitch)*sinf(g_yaw));
 
-        /* shooting (edge-triggered + cooldown) */
+        /* mouse click (edge-triggered): shooting when playing, menu when paused */
         int mdown=glfwGetMouseButton(win,GLFW_MOUSE_BUTTON_LEFT)==GLFW_PRESS;
-        if(mdown && !prev_mouse_down && g_fire_cd<=0 && g_energy>=SHOT_COST && !g_won){
+        int click=mdown && !prev_mouse_down;
+        prev_mouse_down=mdown;
+        if(!g_paused && click && g_fire_cd<=0 && g_energy>=SHOT_COST && !g_won){
             fire_bolt(eye,dir); g_fire_cd=0.22f;
             particles_burst(v3add(eye,v3scale(dir,0.7f)), v3v(0.5f,0.8f,1.6f), 10, 3.5f);
         }
-        prev_mouse_down=mdown;
 
+      if(!g_paused){
         /* update bolts */
         for(int i=0;i<MAX_BOLTS;i++){
             if(!g_bolt[i].alive) continue;
@@ -227,7 +346,7 @@ int main(void){
                 float dx=g_mon[m].pos.x-g_bolt[i].pos.x, dy=g_mon[m].pos.y-g_bolt[i].pos.y, dz=g_mon[m].pos.z-g_bolt[i].pos.z;
                 float hr=0.9f*g_mon[m].scale;
                 if(dx*dx+dy*dy+dz*dz < hr*hr){
-                    g_mon[m].hp-=16.0f; g_mon[m].hurt=1.0f; g_bolt[i].alive=0;
+                    g_mon[m].hp-=16.0f; g_mon[m].hurt=1.0f; g_mon[m].aggro=1; g_bolt[i].alive=0;
                     particles_burst(g_bolt[i].pos, v3v(1.0f,0.4f,0.6f), 10, 3.0f);
                     if(g_mon[m].hp<=0){
                         g_mon[m].alive=0; g_kills++;
@@ -247,12 +366,29 @@ int main(void){
             if(mo->atk_cd>0) mo->atk_cd-=dt;
             v3 tp=v3v(g_px,mo->pos.y,g_pz);
             v3 to=v3sub(tp,mo->pos); float dist=v3len(to);
-            int aware = dist<18.0f && (dist<6.0f || los(mo->pos,eye));
-            if(aware && dist>1.1f && !g_won){
-                v3 step=v3scale(v3norm(to),2.7f*dt);
-                float mr=MON_R*CELL*mo->scale;
-                if(!blocked_r(mo->pos.x+step.x,mo->pos.z,mr)) mo->pos.x+=step.x;
-                if(!blocked_r(mo->pos.x,mo->pos.z+step.z,mr)) mo->pos.z+=step.z;
+            /* aggro'd wraiths (ones you've shot) hunt you from any distance */
+            int aware = mo->aggro || (dist<18.0f && (dist<6.0f || los(mo->pos,eye)));
+            /* separation: shove away from other nearby wraiths so bodies never merge */
+            v3 sep=v3v(0,0,0); float minsep=1.15f*CELL;
+            for(int j=0;j<g_num_mon;j++){
+                if(j==m || !g_mon[j].alive) continue;
+                float dx=mo->pos.x-g_mon[j].pos.x, dz=mo->pos.z-g_mon[j].pos.z;
+                float d2=dx*dx+dz*dz;
+                if(d2>1e-4f && d2<minsep*minsep){
+                    float d=sqrtf(d2), push=(minsep-d)/minsep;
+                    sep.x+=dx/d*push; sep.z+=dz/d*push;
+                }
+            }
+            if(!g_won){
+                /* collision radius stays fixed (not scaled by visual size) so big
+                   monsters can still fit through corridors instead of getting stuck */
+                float mr=MON_R*CELL;
+                v3 vel=v3v(0,0,0);
+                if(aware && dist>1.1f) vel=v3scale(v3norm(to),4.8f); /* faster than walk */
+                vel.x+=sep.x*3.5f; vel.z+=sep.z*3.5f;
+                float sx=vel.x*dt, sz=vel.z*dt;
+                if(!blocked_r(mo->pos.x+sx,mo->pos.z,mr)) mo->pos.x+=sx;
+                if(!blocked_r(mo->pos.x,mo->pos.z+sz,mr)) mo->pos.z+=sz;
             }
             if(dist<1.4f && mo->atk_cd<=0 && !g_won){
                 g_php-=12.0f; mo->atk_cd=1.0f; g_hurt=0.7f;
@@ -300,6 +436,7 @@ int main(void){
                 particles_spawn(v3add(g_relics[i].pos,off), vel, v3v(0.3f,0.8f,1.3f), 0.7f, 4.0f);
             }
         }
+      } /* end if(!g_paused) game update */
 
         /* camera matrices */
         glfwGetFramebufferSize(win,&WW,&WH);
@@ -309,9 +446,9 @@ int main(void){
         mat4 vp=mat4_mul(proj,view);
 
         /* assemble lights: player torch, muzzle flash, bolts, nearest torches */
-        float flick=0.82f+0.18f*sinf((float)now*11.0f)+0.06f*sinf((float)now*23.0f);
         v3 lp[MAX_LIGHTS], lc[MAX_LIGHTS]; float lr[MAX_LIGHTS]; int nl=0;
-        lp[nl]=eye; lc[nl]= g_won? v3v(0.4f,1.6f,0.5f):v3scale(v3v(1.3f,0.9f,0.55f),flick); lr[nl]=9.0f; nl++;
+        /* player torch is steady (no flicker) to avoid eye discomfort */
+        lp[nl]=eye; lc[nl]= g_won? v3v(0.4f,1.6f,0.5f):v3v(1.15f,0.80f,0.50f); lr[nl]=9.0f; nl++;
         if(g_muzzle>0.01f && nl<MAX_LIGHTS){ lp[nl]=v3add(eye,v3scale(dir,0.8f)); lc[nl]=v3scale(v3v(0.6f,0.8f,1.6f),g_muzzle*2.0f); lr[nl]=6.0f; nl++; }
         for(int i=0;i<MAX_BOLTS && nl<MAX_LIGHTS;i++) if(g_bolt[i].alive){
             lp[nl]=g_bolt[i].pos; lc[nl]=v3v(0.3f,0.6f,1.5f); lr[nl]=4.0f; nl++;
@@ -341,36 +478,48 @@ int main(void){
         glBindVertexArray(wvao);
         glDrawArrays(GL_TRIANGLES,0,vcount);
 
-        /* -------- monsters (lit bodies) -------- */
+        /* -------- monsters: capsule wraiths -- cylinder body + hemisphere top ---- */
         glUseProgram(prog_lit);
         upload_lights(ll,nl,lp,lc,lr,eye);
-        glBindVertexArray(cvao);
         glDisable(GL_CULL_FACE);
+        float nmI[9]={1,0,0, 0,1,0, 0,0,1};
+        glUniformMatrix3fv(ul_nrm,1,GL_FALSE,nmI);
         for(int m=0;m<g_num_mon;m++){
             Monster *mo=&g_mon[m];
             if(!mo->alive) continue;
-            float yaw=atan2f(g_pz-mo->pos.z, g_px-mo->pos.x);
             float sc=mo->scale;
+            float R=0.62f*sc;                       /* slimmer cylinder & dome scale */
             float hoverY=mo->pos.y + 0.12f*sinf(mo->anim);
-            mat4 model=mat4_mul(mat4_translate(v3v(mo->pos.x,hoverY,mo->pos.z)),
-                       mat4_mul(mat4_rotY(-yaw), mat4_scale(v3v(0.7f*sc,1.0f*sc,0.55f*sc))));
-            mat4 mvp=mat4_mul(vp,model);
-            glUniformMatrix4fv(ul_mvp,1,GL_FALSE,mvp.m);
-            glUniformMatrix4fv(ul_model,1,GL_FALSE,model.m);
-            float nm[9]={0.7f,0,0, 0,1,0, 0,0,0.55f};
-            glUniformMatrix3fv(ul_nrm,1,GL_FALSE,nm);
-            v3 emis=v3scale(v3v(0.6f,0.1f,0.1f), mo->hurt>0?1.5f:0.15f);
-            glUniform3f(ul_base,0.18f,0.05f,0.22f);
+            float topY=hoverY+0.65f*sc;             /* cylinder top / dome centre */
+            v3 emis = mo->hurt>0 ? v3v(0.9f,0.15f,0.15f) : v3v(0.10f,0.07f,0.18f);
+            glUniform3f(ul_base,0.24f,0.16f,0.34f); /* pale spectral tone */
             glUniform3f(ul_emis,emis.x,emis.y,emis.z);
-            glDrawArrays(GL_TRIANGLES,0,36);
+            /* body: cylinder, bottom fades to a wispy tail */
+            glUniform1f(ul_fade,1.0f);              /* dome uses the same fade so */
+            glBindVertexArray(cyvao);               /* the two share alpha (no seam) */
+            mat4 body=mat4_mul(mat4_translate(v3v(mo->pos.x,hoverY,mo->pos.z)),
+                      mat4_scale(v3v(R,1.30f*sc,R)));
+            glUniformMatrix4fv(ul_mvp,1,GL_FALSE,mat4_mul(vp,body).m);
+            glUniformMatrix4fv(ul_model,1,GL_FALSE,body.m);
+            glDrawArrays(GL_TRIANGLES,0,cycount);
+            /* rounded top: hemisphere (sphere centred on the cylinder's top rim);
+               its lower half fades out inside the body so nothing shows through */
+            glBindVertexArray(svao);
+            mat4 dome=mat4_mul(mat4_translate(v3v(mo->pos.x,topY,mo->pos.z)),
+                      mat4_scale(v3v(R,R,R)));
+            glUniformMatrix4fv(ul_mvp,1,GL_FALSE,mat4_mul(vp,dome).m);
+            glUniformMatrix4fv(ul_model,1,GL_FALSE,dome.m);
+            glDrawArrays(GL_TRIANGLES,0,svcount);
         }
         glEnable(GL_CULL_FACE);
 
-        /* -------- emissive props: round orbs (spheres) + exit pillar (cube) -------- */
+        /* -------- emissive props: glassy glowing orbs -------- */
         glUseProgram(prog_emit);
+        glUniform3f(ue_view,eye.x,eye.y,eye.z);
         glDisable(GL_CULL_FACE);
         glBindVertexArray(svao);
 
+        glUniform1f(ue_alp,1.0f);   /* eyes stay solid */
         for(int m=0;m<g_num_mon;m++){
             Monster *mo=&g_mon[m];
             if(!mo->alive) continue;
@@ -383,62 +532,66 @@ int main(void){
             if(mo->tier==0){      ne=2; ex[0]=-1;ey[0]=0;  ex[1]=1;ey[1]=0; }
             else if(mo->tier==1){ ne=3; ex[0]=-1;ey[0]=0;  ex[1]=0;ey[1]=0;  ex[2]=1;ey[2]=0; }
             else {                ne=4; ex[0]=-1;ey[0]=-1; ex[1]=1;ey[1]=-1; ex[2]=-1;ey[2]=1; ex[3]=1;ey[3]=1; }
-            float spacing=0.14f*sc, esz=0.13f*sc;
-            /* body half-extent toward the player is ~0.35*sc, so push eyes past
-               the front face (0.44*sc) or they get buried inside the cube */
-            v3 center=v3add(v3v(mo->pos.x,hoverY+0.25f*sc,mo->pos.z), v3scale(fw,0.44f*sc));
+            float spacing=0.10f*sc, esz=0.07f*sc;
+            /* eyes sit on the front of the dome/upper body (radius ~0.31*sc) */
+            v3 center=v3add(v3v(mo->pos.x,hoverY+0.62f*sc,mo->pos.z), v3scale(fw,0.30f*sc));
             for(int k=0;k<ne;k++){
                 v3 ep=v3add(center, v3add(v3scale(rt,ex[k]*spacing), v3scale(up,ey[k]*spacing)));
                 mat4 model=mat4_mul(mat4_translate(ep),mat4_scale(v3v(esz,esz,esz)));
-                mat4 mvp=mat4_mul(vp,model);
-                glUniformMatrix4fv(ue_mvp,1,GL_FALSE,mvp.m);
+                glUniformMatrix4fv(ue_mvp,1,GL_FALSE,mat4_mul(vp,model).m);
+                glUniformMatrix4fv(ue_model,1,GL_FALSE,model.m);
                 glUniform3f(ue_col,1.4f,0.15f,0.1f);
                 glUniform1f(ue_pul,0.6f+0.4f*sinf(mo->anim*2.0f));
                 glDrawArrays(GL_TRIANGLES,0,svcount);
             }
         }
+        glUniform1f(ue_alp,0.55f);   /* relics: translucent glass */
         for(int i=0;i<g_num_relics;i++){
             if(g_relics[i].taken) continue;
             float bobY=g_relics[i].pos.y+0.15f*sinf((float)now*2.0f+i);
             mat4 model=mat4_mul(mat4_translate(v3v(g_relics[i].pos.x,bobY,g_relics[i].pos.z)),
                        mat4_scale(v3v(0.5f,0.5f,0.5f)));
-            mat4 mvp=mat4_mul(vp,model);
-            glUniformMatrix4fv(ue_mvp,1,GL_FALSE,mvp.m);
+            glUniformMatrix4fv(ue_mvp,1,GL_FALSE,mat4_mul(vp,model).m);
+            glUniformMatrix4fv(ue_model,1,GL_FALSE,model.m);
             glUniform3f(ue_col,0.3f,0.85f,1.1f);
             glUniform1f(ue_pul,0.5f+0.5f*sinf((float)now*3.0f+i));
             glDrawArrays(GL_TRIANGLES,0,svcount);
         }
+        glUniform1f(ue_alp,0.8f);    /* bolts: mostly solid so they read fast */
         for(int i=0;i<MAX_BOLTS;i++){
             if(!g_bolt[i].alive) continue;
             mat4 model=mat4_mul(mat4_translate(g_bolt[i].pos),mat4_scale(v3v(0.22f,0.22f,0.22f)));
-            mat4 mvp=mat4_mul(vp,model);
-            glUniformMatrix4fv(ue_mvp,1,GL_FALSE,mvp.m);
+            glUniformMatrix4fv(ue_mvp,1,GL_FALSE,mat4_mul(vp,model).m);
+            glUniformMatrix4fv(ue_model,1,GL_FALSE,model.m);
             glUniform3f(ue_col,0.4f,0.8f,1.6f);
             glUniform1f(ue_pul,1.0f);
             glDrawArrays(GL_TRIANGLES,0,svcount);
         }
         {   /* exit portal — tall pillar (cube) */
             int ready=(g_collected==g_num_relics);
+            glUniform1f(ue_alp,0.85f);
             glBindVertexArray(cvao);
             mat4 model=mat4_mul(mat4_translate(g_exit_pos),
                        mat4_mul(mat4_rotY((float)now*0.6f), mat4_scale(v3v(0.8f,WALL_H*0.95f,0.8f))));
-            mat4 mvp=mat4_mul(vp,model);
-            glUniformMatrix4fv(ue_mvp,1,GL_FALSE,mvp.m);
+            glUniformMatrix4fv(ue_mvp,1,GL_FALSE,mat4_mul(vp,model).m);
+            glUniformMatrix4fv(ue_model,1,GL_FALSE,model.m);
             if(ready) glUniform3f(ue_col,0.2f,1.2f,0.4f); else glUniform3f(ue_col,0.5f,0.15f,0.15f);
             glUniform1f(ue_pul,0.5f+0.5f*sinf((float)now*4.0f));
             glDrawArrays(GL_TRIANGLES,0,36);
         }
-        /* healing shrines — shorter pink pillars (cube VAO still bound) */
+        /* healing shrines — shorter round translucent pink pillars (cylinder) */
+        glUniform1f(ue_alp,0.5f);
+        glBindVertexArray(cyvao);
         for(int i=0;i<g_num_shrines;i++){
             int active=(g_shrines[i].cd<=0);
             float H=WALL_H*0.55f;
             mat4 model=mat4_mul(mat4_translate(v3v(g_shrines[i].pos.x,H*0.5f,g_shrines[i].pos.z)),
-                       mat4_mul(mat4_rotY((float)now*0.8f), mat4_scale(v3v(0.45f,H,0.45f))));
-            mat4 mvp=mat4_mul(vp,model);
-            glUniformMatrix4fv(ue_mvp,1,GL_FALSE,mvp.m);
+                       mat4_mul(mat4_rotY((float)now*0.8f), mat4_scale(v3v(0.5f,H,0.5f))));
+            glUniformMatrix4fv(ue_mvp,1,GL_FALSE,mat4_mul(vp,model).m);
+            glUniformMatrix4fv(ue_model,1,GL_FALSE,model.m);
             if(active) glUniform3f(ue_col,1.2f,0.3f,0.55f); else glUniform3f(ue_col,0.22f,0.10f,0.16f);
             glUniform1f(ue_pul, active?0.5f+0.5f*sinf((float)now*3.0f+i):0.05f);
-            glDrawArrays(GL_TRIANGLES,0,36);
+            glDrawArrays(GL_TRIANGLES,0,cycount);
         }
         glEnable(GL_CULL_FACE);
 
@@ -451,13 +604,17 @@ int main(void){
                 particles_burst(g_relics[i].pos, v3v(0.35f,0.9f,1.4f), 30, 4.5f);
             }
         }
-        if(g_collected==g_num_relics && !g_won){
+        if(g_collected==g_num_relics && !g_paused){
             float dx=g_exit_pos.x-g_px, dz=g_exit_pos.z-g_pz;
-            if(dx*dx+dz*dz<2.0f*2.0f) g_won=1;
+            if(dx*dx+dz*dz<2.0f*2.0f){
+                /* escaped -> celebrate and carve a brand-new journey */
+                particles_burst(v3v(g_exit_pos.x,1.2f,g_exit_pos.z), v3v(0.3f,1.4f,0.5f), 60, 6.0f);
+                g_want_regen=1;
+            }
         }
 
         /* -------- particles (world-space, additive) -------- */
-        particles_update(dt);
+        if(!g_paused) particles_update(dt);
         particles_render(vp);
 
         /* -------- weapon viewmodel (on top) -------- */
@@ -469,12 +626,14 @@ int main(void){
             float kick=g_recoil*0.12f + sinf(g_bob)*0.01f;
             v3 anchor=v3add(eye, v3add(v3scale(f,0.55f-kick),
                         v3add(v3scale(rt,0.26f), v3scale(up,-0.22f))));
-            mat4 rot=mat4_basis(rt,up,v3scale(f,-1.0f));
-            /* staff shaft (lit) */
+            /* basis whose local +Y (the cylinder's axis) points forward along the aim */
+            mat4 rot=mat4_basis(rt,f,up);
+            /* staff shaft (lit, fully opaque -> no ghost fade) */
             glUseProgram(prog_lit);
             upload_lights(ll,nl,lp,lc,lr,eye);
-            glBindVertexArray(cvao); glDisable(GL_CULL_FACE);
-            mat4 model=mat4_mul(mat4_translate(anchor),mat4_mul(rot,mat4_scale(v3v(0.06f,0.06f,0.5f))));
+            glUniform1f(ul_fade,0.0f);
+            glBindVertexArray(cyvao); glDisable(GL_CULL_FACE); /* cylindrical shaft */
+            mat4 model=mat4_mul(mat4_translate(anchor),mat4_mul(rot,mat4_scale(v3v(0.05f,0.55f,0.05f))));
             mat4 mvp=mat4_mul(vp,model);
             glUniformMatrix4fv(ul_mvp,1,GL_FALSE,mvp.m);
             glUniformMatrix4fv(ul_model,1,GL_FALSE,model.m);
@@ -482,14 +641,16 @@ int main(void){
             glUniformMatrix3fv(ul_nrm,1,GL_FALSE,nm);
             glUniform3f(ul_base,0.15f,0.13f,0.18f);
             glUniform3f(ul_emis,0.0f,0.0f,0.0f);
-            glDrawArrays(GL_TRIANGLES,0,36);
-            /* glowing round tip */
+            glDrawArrays(GL_TRIANGLES,0,cycount);
+            /* glowing round glassy tip */
             glUseProgram(prog_emit);
+            glUniform3f(ue_view,eye.x,eye.y,eye.z);
+            glUniform1f(ue_alp,0.6f);
             glBindVertexArray(svao);
             v3 tip=v3add(anchor,v3scale(f,0.30f));
             model=mat4_mul(mat4_translate(tip),mat4_scale(v3v(0.12f,0.12f,0.12f)));
-            mvp=mat4_mul(vp,model);
-            glUniformMatrix4fv(ue_mvp,1,GL_FALSE,mvp.m);
+            glUniformMatrix4fv(ue_mvp,1,GL_FALSE,mat4_mul(vp,model).m);
+            glUniformMatrix4fv(ue_model,1,GL_FALSE,model.m);
             glUniform3f(ue_col,0.4f,0.8f,1.6f);
             glUniform1f(ue_pul,0.6f+g_recoil*1.2f);
             glDrawArrays(GL_TRIANGLES,0,svcount);
@@ -503,6 +664,8 @@ int main(void){
         /* -------- HUD -------- */
         glUseProgram(prog_hud);
         glDisable(GL_DEPTH_TEST);
+        glUniform1f(uh_rot,0.0f);
+        H_asp=(float)WH/(float)WW;
 
         if(g_hurt>0.01f){
             glUniform2f(uh_off,-1.0f,-1.0f); glUniform2f(uh_scl,2.0f,2.0f);
@@ -536,31 +699,58 @@ int main(void){
             glUniform1f(uh_alp,0.95f);
             glDrawArrays(GL_TRIANGLES,0,6);
         }
+        {   /* relics — gem icon + "collected/total" number, top-right corner */
+            char rb[32]; snprintf(rb,sizeof rb,"%d/%d",g_collected,g_num_relics);
+            float ph=0.026f, pw=0.014f*H_asp, cy=0.90f, endx=0.95f;
+            float w=(float)strlen(rb)*3.6f*pw - 0.6f*pw;
+            float startx=endx-w;
+            hud_diamond(startx-0.05f, cy, 0.028f, 0.40f,0.95f,1.20f, 0.95f);
+            hud_text(rb, startx, cy+2.5f*ph, pw, ph, 0.55f,0.92f,1.25f, 0.95f);
+        }
+        {   /* kills — a red wraith-eye gem plus a pixel-digit count, top-left */
+            float cy=0.90f;
+            hud_diamond(-0.93f, cy, 0.028f, 1.40f,0.25f,0.20f, 0.95f);
+            float pw=0.014f*H_asp, ph=0.026f;
+            hud_number(g_kills, -0.88f, cy+2.5f*ph, pw, ph, 1.35f,0.45f,0.35f, 0.95f);
+        }
         /* crosshair (aspect-corrected) */
+        glUniform1f(uh_rot,0.0f);
         glUniform2f(uh_off,0,0);
         glUniform2f(uh_scl,(float)WH/(float)WW,1.0f);
         glUniform3f(uh_col,0.9f,0.9f,0.9f); glUniform1f(uh_alp,0.85f);
         glBindVertexArray(hvao); glLineWidth(2.0f);
         glDrawArrays(GL_LINES,0,4);
 
+        /* -------- pause / start menu -------- */
+        if(g_paused){
+            glBindVertexArray(qvao);
+            hud_rect(-1.0f,-1.0f,2.0f,2.0f, 0.0f,0.0f,0.0f, 0.62f); /* dim overlay */
+            hud_text_centered("KOS3D", 0.0f, 0.60f, 0.060f, 0.45f,0.80f,1.20f, 1.0f);
+
+            float nx=(float)(g_cursor_x/(double)WW)*2.0-1.0;
+            float ny=1.0-(float)(g_cursor_y/(double)WH)*2.0;
+            const char *labels[3]={"START","RESTART","EXIT"};
+            float cys[3]={0.24f,0.0f,-0.24f};
+            float bw=0.30f, bh=0.08f;
+            for(int i=0;i<3;i++){
+                float cy=cys[i];
+                int hover=(nx>-bw&&nx<bw&&ny>cy-bh&&ny<cy+bh);
+                if(hover) hud_rect(-bw,cy-bh,2*bw,2*bh, 0.22f,0.42f,0.68f, 0.92f);
+                else      hud_rect(-bw,cy-bh,2*bw,2*bh, 0.09f,0.11f,0.17f, 0.85f);
+                hud_text_centered(labels[i], 0.0f, cy, 0.030f, 0.96f,0.98f,1.0f, 1.0f);
+                if(hover && click){
+                    if(i==0)      set_paused(win,0);                    /* START = continue */
+                    else if(i==1){ g_want_regen=1; set_paused(win,0); } /* RESTART = new journey */
+                    else           glfwSetWindowShouldClose(win,1);     /* EXIT = quit */
+                }
+            }
+        }
+
         glEnable(GL_DEPTH_TEST);
 
         glfwSwapBuffers(win);
         glfwPollEvents();
 
-        /* title HUD */
-        fps_n++;
-        if(now-fps_t>=0.5){
-            double fps=fps_n/(now-fps_t); fps_t=now; fps_n=0;
-            if(g_won)
-                snprintf(title,sizeof title,"kos3d — YOU ESCAPED!  kills:%d  (R = new dungeon)  %.0f fps",g_kills,fps);
-            else if(g_collected==g_num_relics)
-                snprintf(title,sizeof title,"kos3d — all relics! reach the GREEN portal  HP:%d  kills:%d  %.0f fps",(int)g_php,g_kills,fps);
-            else
-                snprintf(title,sizeof title,"kos3d — relics %d/%d  HP:%d  EN:%d  kills:%d  |  LMB shoot, R new, Esc quit  |  %.0f fps",
-                         g_collected,g_num_relics,(int)g_php,(int)g_energy,g_kills,fps);
-            glfwSetWindowTitle(win,title);
-        }
     }
     glfwDestroyWindow(win);
     glfwTerminate();

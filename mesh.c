@@ -79,3 +79,19 @@ int make_sphere(float **out){
     *out=b.data;
     return (int)(b.count/3);
 }
+
+int make_cylinder(float **out){
+    const int seg=24; const float r=0.5f, y0=-0.5f, y1=0.5f;
+    FBuf b={0};
+    for(int i=0;i<seg;i++){
+        float a0=2.0f*PI*(float)i/seg, a1=2.0f*PI*(float)(i+1)/seg;
+        v3 p00=v3v(r*cosf(a0),y0,r*sinf(a0)), p01=v3v(r*cosf(a0),y1,r*sinf(a0));
+        v3 p10=v3v(r*cosf(a1),y0,r*sinf(a1)), p11=v3v(r*cosf(a1),y1,r*sinf(a1));
+        push_pos(&b,p00); push_pos(&b,p10); push_pos(&b,p11);  /* side */
+        push_pos(&b,p00); push_pos(&b,p11); push_pos(&b,p01);
+        push_pos(&b,v3v(0,y0,0)); push_pos(&b,p10); push_pos(&b,p00); /* bottom cap */
+        push_pos(&b,v3v(0,y1,0)); push_pos(&b,p01); push_pos(&b,p11); /* top cap */
+    }
+    *out=b.data;
+    return (int)(b.count/3);
+}

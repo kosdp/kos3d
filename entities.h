@@ -13,6 +13,7 @@
 #define ENERGY_MAX   100.0f  /* staff energy pool          */
 #define SHOT_COST    15.0f   /* energy drained per bolt     */
 #define ENERGY_REGEN 6.0f    /* slow passive recharge /sec  */
+#define SPRINT_DRAIN 18.0f   /* energy drained while sprinting /sec */
 #define MAX_SHRINES  10
 #define SHRINE_HEAL  45.0f   /* health restored per use     */
 #define SHRINE_CD    14.0f   /* seconds until it recharges  */
@@ -21,7 +22,7 @@ typedef struct { v3 pos; int taken; } Relic;
 typedef struct { v3 pos; v3 color; } Torch;
 /* tier 0 = normal (2 eyes, 2 hits), 1 = big (3 eyes in a line, 3 hits),
    2 = huge (4 eyes in a square, 4 hits) */
-typedef struct { v3 pos; float hp, maxhp, anim, hurt, atk_cd, scale; int alive, tier; } Monster;
+typedef struct { v3 pos; float hp, maxhp, anim, hurt, atk_cd, scale; int alive, tier, aggro; } Monster;
 typedef struct { v3 pos, vel; float life; int alive; } Bolt;
 typedef struct { v3 pos; float cd; } Shrine; /* healing pillar; cd>0 = recharging */
 
