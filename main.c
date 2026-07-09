@@ -36,6 +36,7 @@ static int    g_first_mouse=1;
 static int    g_want_regen=0;
 static int    g_paused=1;                 /* start in the menu, paused */
 static int    g_dead=0;                   /* death screen active */
+static int    g_click=0;                  /* one-shot: set on each LMB press event */
 static double g_cursor_x, g_cursor_y;     /* raw cursor position (menu) */
 
 /* pause/resume: swap cursor mode and avoid a look-jump on resume */
@@ -63,6 +64,11 @@ static void mouse_cb(GLFWwindow *w, double mx, double my){
     float lim=PI*0.5f-0.05f;
     if(g_pitch>lim) g_pitch=lim;
     if(g_pitch<-lim) g_pitch=-lim;
+}
+/* one discrete event per physical press -> reliable single-click semantics */
+static void mousebtn_cb(GLFWwindow *w, int button, int action, int mods){
+    (void)w;(void)mods;
+    if(button==GLFW_MOUSE_BUTTON_LEFT && action==GLFW_PRESS) g_click=1;
 }
 
 /* ---- minimal icon + pixel-digit HUD helpers (no fonts / no text labels) ---- */
@@ -174,6 +180,7 @@ int main(void){
     if(glfwRawMouseMotionSupported()) glfwSetInputMode(win,GLFW_RAW_MOUSE_MOTION,GLFW_TRUE);
     glfwSetKeyCallback(win,key_cb);
     glfwSetCursorPosCallback(win,mouse_cb);
+    glfwSetMouseButtonCallback(win,mousebtn_cb);
 
     glewExperimental=GL_TRUE;
     if(glewInit()!=GLEW_OK){ fprintf(stderr,"glewInit failed\n"); return 1; }
@@ -277,7 +284,6 @@ int main(void){
     GLint uh_alp=glGetUniformLocation(prog_hud,"uAlpha");
     H_off=uh_off; H_scl=uh_scl; H_rot=uh_rot; H_col=uh_col; H_alp=uh_alp;
 
-    int prev_mouse_down=0;
     int sprint_ready=1;   /* stamina gate: locks at empty, re-arms once recharged */
     float g_level_time=0.0f;  /* seconds spent in the current run */
     double prev=glfwGetTime();
@@ -303,7 +309,9 @@ int main(void){
         if(g_recoil>0){ g_recoil -= dt*6.0f; if(g_recoil<0) g_recoil=0; }
         if(g_muzzle>0){ g_muzzle -= dt*8.0f; if(g_muzzle<0) g_muzzle=0; }
         if(g_fire_cd>0) g_fire_cd-= dt;
-        g_energy += dt*ENERGY_REGEN; if(g_energy>ENERGY_MAX) g_energy=ENERGY_MAX;
+        if(!g_paused && !g_dead && !g_won){   /* energy only recharges while playing */
+            g_energy += dt*ENERGY_REGEN; if(g_energy>ENERGY_MAX) g_energy=ENERGY_MAX;
+        }
 
         /* movement */
         float fwd_x=cosf(g_yaw), fwd_z=sinf(g_yaw);
@@ -335,11 +343,10 @@ int main(void){
         v3 eye=v3v(g_px,eye_y,g_pz);
         v3 dir=v3v(cosf(g_pitch)*cosf(g_yaw), sinf(g_pitch), cosf(g_pitch)*sinf(g_yaw));
 
-        /* mouse click (edge-triggered): shooting when playing, menu when paused */
-        int mdown=glfwGetMouseButton(win,GLFW_MOUSE_BUTTON_LEFT)==GLFW_PRESS;
-        int click=mdown && !prev_mouse_down;
-        prev_mouse_down=mdown;
-        if(!g_paused && !g_dead && click && g_fire_cd<=0 && g_energy>=SHOT_COST && !g_won){
+        /* one click == one shot: consume the pending press event (set by the
+           mouse-button callback). Used for firing OR menu/screen selection. */
+        int click=g_click; g_click=0;
+        if(!g_paused && !g_dead && !g_won && click && g_fire_cd<=0 && g_energy>=SHOT_COST){
             fire_bolt(eye,dir); g_fire_cd=0.22f;
             particles_burst(v3add(eye,v3scale(dir,0.7f)), v3v(0.5f,0.8f,1.6f), 10, 3.5f);
         }

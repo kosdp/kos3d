@@ -77,6 +77,7 @@ void place_props(void){
 void reset_player_to_spawn(void){
     v3 c=room_center_world(g_rooms[0]);
     g_px=c.x; g_pz=c.z; g_yaw=-PI*0.5f; g_pitch=0; g_won=0; g_php=100.0f; g_energy=ENERGY_MAX;
+    g_fire_cd=0; g_recoil=0; g_muzzle=0;
 }
 
 void new_dungeon(void){ gen_dungeon(); place_props(); reset_player_to_spawn(); }
