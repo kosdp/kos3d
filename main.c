@@ -35,6 +35,7 @@ static double g_last_mx, g_last_my;
 static int    g_first_mouse=1;
 static int    g_want_regen=0;
 static int    g_paused=1;                 /* start in the menu, paused */
+static int    g_dead=0;                   /* death screen active */
 static double g_cursor_x, g_cursor_y;     /* raw cursor position (menu) */
 
 /* pause/resume: swap cursor mode and avoid a look-jump on resume */
@@ -47,13 +48,13 @@ static void set_paused(GLFWwindow *w, int p){
 static void key_cb(GLFWwindow *w, int key, int sc, int action, int mods){
     (void)sc;(void)mods;
     if(action==GLFW_PRESS){
-        if(key==GLFW_KEY_ESCAPE) set_paused(w, !g_paused); /* toggle menu */
+        if(key==GLFW_KEY_ESCAPE && !g_dead && !g_won) set_paused(w, !g_paused); /* toggle menu */
     }
 }
 static void mouse_cb(GLFWwindow *w, double mx, double my){
     (void)w;
     g_cursor_x=mx; g_cursor_y=my;
-    if(g_paused) return;                    /* no camera look while in the menu */
+    if(g_paused||g_dead||g_won) return;     /* no camera look in menu / death / win screen */
     if(g_first_mouse){ g_last_mx=mx; g_last_my=my; g_first_mouse=0; }
     float dx=(float)(mx-g_last_mx), dy=(float)(my-g_last_my);
     g_last_mx=mx; g_last_my=my;
@@ -119,6 +120,12 @@ static void glyph5(char c, unsigned char g[5]){
         case 'S':{static const unsigned char t[5]={7,4,7,1,7}; p=t;} break;
         case 'T':{static const unsigned char t[5]={7,2,2,2,2}; p=t;} break;
         case 'X':{static const unsigned char t[5]={5,5,2,5,5}; p=t;} break;
+        case 'Y':{static const unsigned char t[5]={5,5,2,2,2}; p=t;} break;
+        case 'U':{static const unsigned char t[5]={5,5,5,5,7}; p=t;} break;
+        case 'C':{static const unsigned char t[5]={7,4,4,4,7}; p=t;} break;
+        case 'L':{static const unsigned char t[5]={4,4,4,4,7}; p=t;} break;
+        case 'P':{static const unsigned char t[5]={6,5,6,4,4}; p=t;} break;
+        case 'M':{static const unsigned char t[5]={5,7,7,5,5}; p=t;} break;
         case '/':{static const unsigned char t[5]={1,1,2,4,4}; p=t;} break;
         default: for(int i=0;i<5;i++) g[i]=0; return;
     }
@@ -271,6 +278,8 @@ int main(void){
     H_off=uh_off; H_scl=uh_scl; H_rot=uh_rot; H_col=uh_col; H_alp=uh_alp;
 
     int prev_mouse_down=0;
+    int sprint_ready=1;   /* stamina gate: locks at empty, re-arms once recharged */
+    float g_level_time=0.0f;  /* seconds spent in the current run */
     double prev=glfwGetTime();
 
     while(!glfwWindowShouldClose(win)){
@@ -283,7 +292,11 @@ int main(void){
             glBindVertexArray(wvao); glBindBuffer(GL_ARRAY_BUFFER,wvbo);
             glBufferData(GL_ARRAY_BUFFER,nc*9*sizeof(float),nv,GL_STATIC_DRAW);
             free(nv); vcount=nc;
+            g_level_time=0.0f;             /* fresh run -> reset the clock */
         }
+
+        /* level timer runs only while actively playing */
+        if(!g_paused && !g_dead && !g_won) g_level_time += dt;
 
         /* decay timers */
         if(g_hurt>0)    g_hurt   -= dt*1.5f;
@@ -303,9 +316,12 @@ int main(void){
         float ml=sqrtf(mx*mx+mz*mz);
         /* sprint only while there is energy, and it drains the same blue bar as
            shooting so you can't run forever */
-        int sprint = glfwGetKey(win,GLFW_KEY_LEFT_SHIFT)==GLFW_PRESS && ml>1e-4f && g_energy>0.0f && !g_won && !g_paused;
+        /* stamina hysteresis: empty the bar and sprint locks until it recharges */
+        if(g_energy<=0.5f)       sprint_ready=0;
+        if(g_energy>=SHOT_COST)  sprint_ready=1;  /* re-arm once a shot is affordable */
+        int sprint = glfwGetKey(win,GLFW_KEY_LEFT_SHIFT)==GLFW_PRESS && ml>1e-4f && sprint_ready && !g_won && !g_paused && !g_dead;
         float speed = sprint?7.5f:4.2f;
-        if(ml>1e-4f && !g_won && !g_paused){
+        if(ml>1e-4f && !g_won && !g_paused && !g_dead){
             mx/=ml; mz/=ml;
             float pr=PLAYER_R*CELL;
             float nx=g_px+mx*speed*dt, nz=g_pz+mz*speed*dt;
@@ -323,21 +339,23 @@ int main(void){
         int mdown=glfwGetMouseButton(win,GLFW_MOUSE_BUTTON_LEFT)==GLFW_PRESS;
         int click=mdown && !prev_mouse_down;
         prev_mouse_down=mdown;
-        if(!g_paused && click && g_fire_cd<=0 && g_energy>=SHOT_COST && !g_won){
+        if(!g_paused && !g_dead && click && g_fire_cd<=0 && g_energy>=SHOT_COST && !g_won){
             fire_bolt(eye,dir); g_fire_cd=0.22f;
             particles_burst(v3add(eye,v3scale(dir,0.7f)), v3v(0.5f,0.8f,1.6f), 10, 3.5f);
         }
 
-      if(!g_paused){
+      if(!g_paused && !g_dead && !g_won){
         /* update bolts */
         for(int i=0;i<MAX_BOLTS;i++){
             if(!g_bolt[i].alive) continue;
+            g_bolt[i].vel.y -= BOLT_GRAVITY*dt;   /* bullet drop */
             g_bolt[i].pos=v3add(g_bolt[i].pos,v3scale(g_bolt[i].vel,dt));
             g_bolt[i].life-=dt;
             /* glowing trail */
             particles_spawn(g_bolt[i].pos, v3v((frand()-0.5f)*0.6f,(frand()-0.5f)*0.6f,(frand()-0.5f)*0.6f),
                             v3v(0.4f,0.7f,1.5f), 0.28f, 5.0f);
-            if(g_bolt[i].life<=0 || solid_at_world(g_bolt[i].pos.x,g_bolt[i].pos.z)){
+            if(g_bolt[i].life<=0 || solid_at_world(g_bolt[i].pos.x,g_bolt[i].pos.z)
+               || g_bolt[i].pos.y<=0.0f || g_bolt[i].pos.y>=WALL_H){ /* wall, floor or ceiling */
                 particles_burst(g_bolt[i].pos, v3v(0.4f,0.7f,1.6f), 12, 4.0f);
                 g_bolt[i].alive=0; continue;
             }
@@ -392,7 +410,10 @@ int main(void){
             }
             if(dist<1.4f && mo->atk_cd<=0 && !g_won){
                 g_php-=12.0f; mo->atk_cd=1.0f; g_hurt=0.7f;
-                if(g_php<=0){ g_dead_flash=1; reset_player_to_spawn(); g_hurt=1.0f; }
+                if(g_php<=0){                 /* death: freeze and show the death screen */
+                    g_php=0; g_dead=1; g_hurt=1.0f;
+                    glfwSetInputMode(win,GLFW_CURSOR,GLFW_CURSOR_NORMAL);
+                }
             }
         }
 
@@ -575,7 +596,8 @@ int main(void){
                        mat4_mul(mat4_rotY((float)now*0.6f), mat4_scale(v3v(0.8f,WALL_H*0.95f,0.8f))));
             glUniformMatrix4fv(ue_mvp,1,GL_FALSE,mat4_mul(vp,model).m);
             glUniformMatrix4fv(ue_model,1,GL_FALSE,model.m);
-            if(ready) glUniform3f(ue_col,0.2f,1.2f,0.4f); else glUniform3f(ue_col,0.5f,0.15f,0.15f);
+            if(ready) glUniform3f(ue_col,0.2f,1.2f,0.4f);  /* unlocked: green */
+            else      glUniform3f(ue_col,0.95f,0.97f,1.05f); /* locked: white (distinct from shrines) */
             glUniform1f(ue_pul,0.5f+0.5f*sinf((float)now*4.0f));
             glDrawArrays(GL_TRIANGLES,0,36);
         }
@@ -595,8 +617,8 @@ int main(void){
         }
         glEnable(GL_CULL_FACE);
 
-        /* relic pickup + exit check */
-        for(int i=0;i<g_num_relics;i++){
+        /* relic pickup + exit check (not while paused / dead) */
+        for(int i=0;i<g_num_relics && !g_paused && !g_dead;i++){
             if(g_relics[i].taken) continue;
             float dx=g_relics[i].pos.x-g_px, dz=g_relics[i].pos.z-g_pz;
             if(dx*dx+dz*dz<1.4f*1.4f){
@@ -604,17 +626,18 @@ int main(void){
                 particles_burst(g_relics[i].pos, v3v(0.35f,0.9f,1.4f), 30, 4.5f);
             }
         }
-        if(g_collected==g_num_relics && !g_paused){
+        if(g_collected==g_num_relics && !g_paused && !g_dead && !g_won){
             float dx=g_exit_pos.x-g_px, dz=g_exit_pos.z-g_pz;
             if(dx*dx+dz*dz<2.0f*2.0f){
-                /* escaped -> celebrate and carve a brand-new journey */
-                particles_burst(v3v(g_exit_pos.x,1.2f,g_exit_pos.z), v3v(0.3f,1.4f,0.5f), 60, 6.0f);
-                g_want_regen=1;
+                /* escaped -> show the level-cleared screen */
+                g_won=1;
+                particles_burst(v3v(g_exit_pos.x,1.2f,g_exit_pos.z), v3v(0.3f,1.4f,0.5f), 80, 7.0f);
+                glfwSetInputMode(win,GLFW_CURSOR,GLFW_CURSOR_NORMAL);
             }
         }
 
         /* -------- particles (world-space, additive) -------- */
-        if(!g_paused) particles_update(dt);
+        if(!g_paused && !g_dead) particles_update(dt);
         particles_render(vp);
 
         /* -------- weapon viewmodel (on top) -------- */
@@ -670,11 +693,6 @@ int main(void){
         if(g_hurt>0.01f){
             glUniform2f(uh_off,-1.0f,-1.0f); glUniform2f(uh_scl,2.0f,2.0f);
             glUniform3f(uh_col,0.7f,0.0f,0.0f); glUniform1f(uh_alp,g_hurt*0.45f);
-            glBindVertexArray(qvao); glDrawArrays(GL_TRIANGLES,0,6);
-        }
-        if(g_won){
-            glUniform2f(uh_off,-1.0f,-1.0f); glUniform2f(uh_scl,2.0f,2.0f);
-            glUniform3f(uh_col,0.1f,0.6f,0.2f); glUniform1f(uh_alp,0.18f);
             glBindVertexArray(qvao); glDrawArrays(GL_TRIANGLES,0,6);
         }
         {   /* health bar bottom-left */
@@ -743,6 +761,43 @@ int main(void){
                     else if(i==1){ g_want_regen=1; set_paused(win,0); } /* RESTART = new journey */
                     else           glfwSetWindowShouldClose(win,1);     /* EXIT = quit */
                 }
+            }
+        }
+
+        /* -------- death screen -------- */
+        if(g_dead){
+            glBindVertexArray(qvao);
+            hud_rect(-1.0f,-1.0f,2.0f,2.0f, 0.35f,0.0f,0.0f, 0.55f); /* blood overlay */
+            hud_text_centered("YOU DIED", 0.0f, 0.28f, 0.075f, 1.0f,0.20f,0.20f, 1.0f);
+            hud_text_centered("KILLS", -0.14f, -0.02f, 0.030f, 0.9f,0.9f,0.9f, 1.0f);
+            hud_number(g_kills, 0.08f, -0.02f+2.5f*0.030f, 0.030f*H_asp, 0.030f, 1.0f,0.9f,0.5f, 1.0f);
+            hud_text_centered("CLICK TO RESTART", 0.0f, -0.30f, 0.028f, 0.85f,0.90f,1.0f, 1.0f);
+            if(click){                       /* restart a fresh journey */
+                g_want_regen=1; g_dead=0; set_paused(win,0);
+            }
+        }
+
+        /* -------- level-cleared / victory screen -------- */
+        if(g_won){
+            /* rain celebration confetti around the player (rendered next frame) */
+            for(int k=0;k<4;k++){
+                v3 p=v3add(eye, v3v((frand()-0.5f)*4.0f, 2.0f+frand()*1.5f, (frand()-0.5f)*4.0f));
+                v3 vel=v3v((frand()-0.5f)*1.5f, 0.5f+frand()*1.5f, (frand()-0.5f)*1.5f);
+                v3 col=v3v(0.4f+frand()*0.9f, 0.4f+frand()*0.9f, 0.4f+frand()*0.9f);
+                particles_spawn(p, vel, col, 1.6f, 6.0f);
+            }
+            glBindVertexArray(qvao);
+            hud_rect(-1.0f,-1.0f,2.0f,2.0f, 0.0f,0.20f,0.05f, 0.55f); /* green overlay */
+            hud_text_centered("ESCAPED", 0.0f, 0.42f, 0.065f, 0.4f,1.2f,0.5f, 1.0f);
+            /* TIME <seconds> */
+            hud_text_centered("TIME", -0.16f, 0.08f, 0.032f, 0.9f,0.95f,0.9f, 1.0f);
+            hud_number((int)g_level_time, 0.06f, 0.08f+2.5f*0.032f, 0.032f*H_asp, 0.032f, 1.0f,1.0f,0.6f, 1.0f);
+            /* KILLS <n> */
+            hud_text_centered("KILLS", -0.16f, -0.06f, 0.032f, 0.9f,0.95f,0.9f, 1.0f);
+            hud_number(g_kills, 0.06f, -0.06f+2.5f*0.032f, 0.032f*H_asp, 0.032f, 1.0f,0.7f,0.5f, 1.0f);
+            hud_text_centered("CLICK TO RESTART", 0.0f, -0.34f, 0.028f, 0.85f,1.0f,0.9f, 1.0f);
+            if(click){                       /* next journey */
+                g_want_regen=1; g_won=0; set_paused(win,0);
             }
         }
 

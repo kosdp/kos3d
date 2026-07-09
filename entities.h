@@ -17,6 +17,9 @@
 #define MAX_SHRINES  10
 #define SHRINE_HEAL  45.0f   /* health restored per use     */
 #define SHRINE_CD    14.0f   /* seconds until it recharges  */
+#define BOLT_SPEED   34.0f   /* initial bolt speed           */
+#define BOLT_GRAVITY 6.0f    /* bullet drop /sec^2           */
+#define BOLT_SPREAD  0.035f  /* random aim-cone half-width   */
 
 typedef struct { v3 pos; int taken; } Relic;
 typedef struct { v3 pos; v3 color; } Torch;
