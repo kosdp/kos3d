@@ -684,8 +684,9 @@ int main(void){
             glUniform3f(ue_col,0.4f,0.8f,1.6f);
             glUniform1f(ue_pul,0.6f+g_recoil*1.2f);
             glDrawArrays(GL_TRIANGLES,0,svcount);
-            /* idle sparkle drifting off the staff tip */
-            if(frand()<dt*12.0f)
+            /* idle sparkle drifting off the staff tip (not while paused/dead/won,
+               else they pile up unmoving and release in a burst on resume) */
+            if(!g_paused && !g_dead && !g_won && frand()<dt*12.0f)
                 particles_spawn(tip, v3v((frand()-0.5f)*0.4f,0.4f+0.3f*frand(),(frand()-0.5f)*0.4f),
                                 v3v(0.4f,0.7f,1.5f), 0.5f, 4.0f);
             glEnable(GL_CULL_FACE);
@@ -787,9 +788,9 @@ int main(void){
         /* -------- level-cleared / victory screen -------- */
         if(g_won){
             /* rain celebration confetti around the player (rendered next frame) */
-            for(int k=0;k<4;k++){
-                v3 p=v3add(eye, v3v((frand()-0.5f)*4.0f, 2.0f+frand()*1.5f, (frand()-0.5f)*4.0f));
-                v3 vel=v3v((frand()-0.5f)*1.5f, 0.5f+frand()*1.5f, (frand()-0.5f)*1.5f);
+            for(int k=0;k<16;k++){
+                v3 p=v3add(eye, v3v((frand()-0.5f)*5.0f, 2.0f+frand()*2.0f, (frand()-0.5f)*5.0f));
+                v3 vel=v3v((frand()-0.5f)*1.8f, 0.5f+frand()*1.8f, (frand()-0.5f)*1.8f);
                 v3 col=v3v(0.4f+frand()*0.9f, 0.4f+frand()*0.9f, 0.4f+frand()*0.9f);
                 particles_spawn(p, vel, col, 1.6f, 6.0f);
             }
@@ -797,11 +798,11 @@ int main(void){
             hud_rect(-1.0f,-1.0f,2.0f,2.0f, 0.0f,0.20f,0.05f, 0.55f); /* green overlay */
             hud_text_centered("ESCAPED", 0.0f, 0.42f, 0.065f, 0.4f,1.2f,0.5f, 1.0f);
             /* TIME <seconds> */
-            hud_text_centered("TIME", -0.16f, 0.08f, 0.032f, 0.9f,0.95f,0.9f, 1.0f);
-            hud_number((int)g_level_time, 0.06f, 0.08f+2.5f*0.032f, 0.032f*H_asp, 0.032f, 1.0f,1.0f,0.6f, 1.0f);
+            hud_text_centered("TIME", -0.16f, 0.14f, 0.032f, 0.9f,0.95f,0.9f, 1.0f);
+            hud_number((int)g_level_time, 0.06f, 0.14f+2.5f*0.032f, 0.032f*H_asp, 0.032f, 1.0f,1.0f,0.6f, 1.0f);
             /* KILLS <n> */
-            hud_text_centered("KILLS", -0.16f, -0.06f, 0.032f, 0.9f,0.95f,0.9f, 1.0f);
-            hud_number(g_kills, 0.06f, -0.06f+2.5f*0.032f, 0.032f*H_asp, 0.032f, 1.0f,0.7f,0.5f, 1.0f);
+            hud_text_centered("KILLS", -0.16f, -0.10f, 0.032f, 0.9f,0.95f,0.9f, 1.0f);
+            hud_number(g_kills, 0.06f, -0.10f+2.5f*0.032f, 0.032f*H_asp, 0.032f, 1.0f,0.7f,0.5f, 1.0f);
             hud_text_centered("CLICK TO RESTART", 0.0f, -0.34f, 0.028f, 0.85f,1.0f,0.9f, 1.0f);
             if(click){                       /* next journey */
                 g_want_regen=1; g_won=0; set_paused(win,0);
